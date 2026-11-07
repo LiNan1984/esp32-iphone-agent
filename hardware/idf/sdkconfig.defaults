@@ -117,3 +117,7 @@ CONFIG_MBEDTLS_HKDF_C=y
 # Two options esp_wifi.h needs that the remote Kconfig does not define.
 CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUF=0
 CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM=7
+
+# The real Handsy GATT service + command bridge. Defaults to y in Kconfig; stated
+# here so it is visible. See the Kconfig help for what is and is not verified.
+CONFIG_P4_BLE_GATT_SERVICE=y

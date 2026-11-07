@@ -19,7 +19,7 @@
 >   与 `Handsy GATT advertising`，iPhone App 的选板页**已能发现**开发板。但**加密配对、
 >   命令传输、通知与视频均未验证**。
 > - **视频转发**：未完成。
-- **BLE 命令 → USB HID 已接通（代码层面，未上板）**：新增 `main/p4_cmd_bridge.c`。
+- **BLE 命令 → USB HID 已接通（真机启动，iPhone 侧未验证）**：新增 `main/p4_cmd_bridge.c`。
   App 写 `<id> <command>` 到 `cmd` 特征 → 拆出 id → 入队 → worker 任务执行
   `p4_hid_command()` → 拼回 `<id> <reply>` → 投递回 NimBLE host task → `reply` 特征通知。
   之所以要 worker + 事件回投：p4_ble 的回调跑在 NimBLE host task 上不能阻塞，而原固件的
@@ -28,6 +28,13 @@
   回投用的是 `ble_hs_evq_get()` + `ble_npl_eventq_put()`——`ble_hs_event_enqueue()` 虽然
   名字更直接，但它的 `struct os_event` 在 IDF 的 bt 组件里**没有定义**（MyNewt sys 库的类型，
   ESP-IDF 用 `ble_npl` 垫层替代），实际不可用。
+  **踩过的坑：`ble_npl_*` 全部经由 `npl_funcs` 函数表转发，而该表要 `nimble_port_init()` 才填充。**
+  `esp_hosted_bt_host_stack_setup()` 绑 NimBLE 时并不调它，所以在 `p4_ble_start()` 之前调
+  `ble_npl_event_init()` 会 NULL 解引用（`MTVAL=0x24`）。**顺序必须是先 `p4_ble_start()`
+  再 `p4_cmd_bridge_start()`。**
+  另外 `CONFIG_P4_BLE_GATT_DIAGNOSTIC` 已更名为 `CONFIG_P4_BLE_GATT_SERVICE` 并默认开启——
+  旧名旧描述（"read-only diagnostic / must not be used for pairing"）在接入真命令桥后
+  已经成了误导，而且它默认关闭意味着整个服务被编译掉、真机路径从未执行过。
   **未在板上运行，未在 iPhone 上验证。**
 - **net / status 特征已有实现但 deliberately 保守**：`net_read` 返回 SoftAP 凭据 + vtok
   （Wi-Fi 起来后填充），`net_write` 目前**只记日志不生效**（AP/STA 切换还没接持久化配置），

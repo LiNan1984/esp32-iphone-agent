@@ -43,10 +43,14 @@ config P4_USB_HID_DIAGNOSTIC
         the diagnostic restores it. This only exposes HID descriptors; BLE
         commands are not wired yet.
 
-config P4_BLE_GATT_DIAGNOSTIC
-    bool "Start experimental read-only BLE GATT diagnostic"
-    default n
+config P4_BLE_GATT_SERVICE
+    bool "Start the Handsy BLE GATT service"
+    default y
     help
-        Register and advertise the Handsy GATT service for development.
-        Network, status and command operations deliberately return errors;
-        this is not a functional Handsy service and must not be used for pairing.
+        Register and advertise the Handsy GATT service and run the command bridge
+        (cmd characteristic -> USB HID -> reply characteristic).
+
+        Commands and replies are wired; net_write (AP/STA switching) is accepted
+        but not acted on, and video is not forwarded yet. Encrypted pairing,
+        command transfer and notification have NOT been verified on an iPhone,
+        so treat this as experimental despite it being the real service.

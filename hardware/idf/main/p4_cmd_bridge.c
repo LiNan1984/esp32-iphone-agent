@@ -82,18 +82,14 @@ static void worker_task(void *arg) {
 int p4_cmd_bridge_command(p4_ble_session session, const uint8_t *data, size_t len) {
     if (!data || len == 0 || len >= CMD_MAX) return -1;
 
-    // Split "<id> <command>". The id is everything up to the first space; the
-    // rest is the command. No id means nothing to echo, so refuse it.
-    const char *sp = memchr(data, ' ', len);
-    if (!sp) return -1;
-    size_t id_len = (size_t)(sp - (const char *)data);
-    if (id_len == 0 || id_len >= ID_MAX) return -1;
+    char id[ID_MAX];
+    const char *cmd;
+    size_t cmd_len;
+    if (!p4_cmd_split((const char *)data, len, id, sizeof id, &cmd, &cmd_len)) return -1;
 
     cmd_item c = { .session = session };
-    memcpy(c.id, data, id_len);
-    c.id[id_len] = '\0';
-    size_t cmd_len = len - id_len - 1;
-    memcpy(c.line, sp + 1, cmd_len);
+    memcpy(c.id, id, strlen(id) + 1);
+    memcpy(c.line, cmd, cmd_len);
     c.line[cmd_len] = '\0';
 
     if (xQueueSend(cmd_q, &c, 0) != pdPASS) {

@@ -449,22 +449,31 @@ void app_main(void) {
            heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024,
            heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
 
-#if CONFIG_P4_BLE_GATT_DIAGNOSTIC
-  // The discovery diagnostic must not initialize Wi-Fi or mutate its NVS settings.
+#if CONFIG_P4_BLE_GATT_SERVICE
+  // The service needs NVS (bond storage) and the hosted C5 link before it can
+  // advertise, so bring those up first. It does NOT return early any more: the
+  // diagnostic that this block grew out of had to avoid touching Wi-Fi, but the
+  // real service wants AirPlay and the SoftAP running underneath it.
   esp_err_t nvs_err = nvs_flash_init();
-  if (nvs_err != ESP_OK) { ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_err)); return; }
+  if (nvs_err != ESP_OK) ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_err));
+
   test_hosted();
   test_hosted_bt();
-  esp_err_t bridge_err = p4_cmd_bridge_start();
-  if (bridge_err != ESP_OK) ESP_LOGE(TAG, "command bridge failed: %s", esp_err_to_name(bridge_err));
 
-  const p4_ble_ops ble_diag = {
+  // Order matters: p4_ble_start() runs nimble_port_init(), which is what fills
+  // the npl_funcs table that every ble_npl_* call goes through. Starting the
+  // bridge first dereferences that table while it is still NULL.
+  const p4_ble_ops ble_ops = {
     .command = p4_cmd_bridge_command, .net_read = net_read, .net_write = net_write,
     .status_read = status_read, .disconnected = p4_cmd_bridge_disconnected,
   };
-  esp_err_t ble_err = p4_ble_start(&ble_diag);
-  if (ble_err != ESP_OK) ESP_LOGE(TAG, "BLE diagnostic failed: %s", esp_err_to_name(ble_err));
-  return;
+  esp_err_t ble_err = p4_ble_start(&ble_ops);
+  if (ble_err != ESP_OK) {
+    ESP_LOGE(TAG, "BLE GATT start failed: %s", esp_err_to_name(ble_err));
+  } else {
+    esp_err_t bridge_err = p4_cmd_bridge_start();
+    if (bridge_err != ESP_OK) ESP_LOGE(TAG, "command bridge failed: %s", esp_err_to_name(bridge_err));
+  }
 #endif
 
   // The GOP lives in PSRAM; without it the AirPlay receiver has nowhere to put
