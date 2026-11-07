@@ -36,6 +36,7 @@
 #include "p4_usb_hid.h"
 #include "p4_ble.h"
 #include "p4_cmd_bridge.h"
+#include "p4_serial_cmds.h"
 
 static const char *TAG = "core";
 
@@ -473,6 +474,9 @@ void app_main(void) {
   } else {
     esp_err_t bridge_err = p4_cmd_bridge_start();
     if (bridge_err != ESP_OK) ESP_LOGE(TAG, "command bridge failed: %s", esp_err_to_name(bridge_err));
+    // The serial path is independent of BLE, so it works even when no central
+    // will complete pairing.
+    if (p4_serial_cmds_start() != ESP_OK) ESP_LOGE(TAG, "serial commands failed to start");
   }
 #endif
 
