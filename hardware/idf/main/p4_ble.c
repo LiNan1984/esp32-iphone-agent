@@ -150,19 +150,34 @@ static const struct ble_gatt_svc_def services[] = {{
     },
 }, {0}};
 static int gap_event(struct ble_gap_event *event, void *arg);
+// Alternate the advertised service between the App's (...0000) and the CLI's
+// (...0010). Both clients filter their scan by service UUID — the iOS App looks
+// for ...0000, the repository's Go CLI for ...0010 — and two 128-bit UUIDs do
+// not fit in the 31-byte advertisement payload. Putting both there fails with
+// BLE_HS_EMSGSIZE and the board becomes invisible to everyone. The original
+// firmware alternates for exactly this reason; the timings match it. One
+// address throughout, so no bond ever goes stale.
+#define ADV_APP_MS 750
+#define ADV_CLI_MS 250
+static bool adv_cli_phase;
+
 static void advertise(void) {
     struct ble_hs_adv_fields fields = {0}, scan = {0};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.uuids128 = &service_uuid; fields.num_uuids128 = 1; fields.uuids128_is_complete = 1;
+    fields.uuids128 = adv_cli_phase ? &cli_svc_uuid : &service_uuid;
+    fields.num_uuids128 = 1; fields.uuids128_is_complete = 1;
     const char *name = ble_svc_gap_device_name();
     scan.name = (const uint8_t *)name; scan.name_len = strlen(name); scan.name_is_complete = 1;
     int rc = ble_gap_adv_set_fields(&fields);
     if (!rc) rc = ble_gap_adv_rsp_set_fields(&scan);
     struct ble_gap_adv_params params = {0};
     params.conn_mode = BLE_GAP_CONN_MODE_UND; params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    if (!rc) rc = ble_gap_adv_start(own_addr_type, NULL, BLE_HS_FOREVER, &params, gap_event, NULL);
+    // A bounded duration, so ADV_COMPLETE fires and the service can be switched.
+    if (!rc) rc = ble_gap_adv_start(own_addr_type, NULL,
+                                   adv_cli_phase ? ADV_CLI_MS : ADV_APP_MS,
+                                   &params, gap_event, NULL);
     if (rc) ESP_LOGE(TAG, "advertising failed: %d", rc);
-    else ESP_LOGI(TAG, "Handsy GATT advertising");
+    else ESP_LOGI(TAG, "advertising %s service", adv_cli_phase ? "CLI" : "App");
 }
 static int gap_event(struct ble_gap_event *event, void *arg) {
     (void)arg;
@@ -192,7 +207,10 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
         if (event->subscribe.cur_notify) subscriptions |= bit; else subscriptions &= ~bit;
         break;
     }
-    case BLE_GAP_EVENT_ADV_COMPLETE: advertise(); break;
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        adv_cli_phase = !adv_cli_phase;   // hand the slot to the other client
+        advertise();
+        break;
     case BLE_GAP_EVENT_ENC_CHANGE: {
         struct ble_gap_conn_desc d;
         uint16_t conn = event->enc_change.conn_handle;

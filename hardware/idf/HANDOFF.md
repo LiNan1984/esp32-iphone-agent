@@ -1,13 +1,42 @@
 # 交接文档：esp32-iphone-agent → Metalio Claw 4 (ESP32-P4)
 
 日期：2026-11-07
-状态：**AirPlay 服务启动、hosted C5 链路、SoftAP、hosted BLE 均在真机自测通过（56/56，
-更早版本固件的证据）。USB HID 与 BLE GATT 服务已实现且能编译，iPhone 也已能发现板子，
-但加密配对、命令传输、视频转发均未验证——服务整体尚未跑通。详见下方汇总。**
+状态：**⚠️ 板子当前烧着的是坏固件——广播失败（`advertising failed: 4`），任何客户端都发现不了它。
+修复代码已写好、能编译，但尚未烧录验证。烧录前请先读下面「当前状态」。**
+
+已验证：BLE 命令往返真机通过（Mac 不配对，`1 ping` → `1 ok`）；hosted C5 链路、SoftAP、
+AirPlay 服务启动均通过；60/60 自测，0 崩溃。
+未验证：App 的加密配对、视频流、HID 报告送达 iPhone。
 
 > **署名 / Attribution**
 > 本项目基于 [ESP32 iPhone Agent](https://github.com/onehumanbeing/esp32-iphone-agent) by Henry Yuan（MIT）。
 > 若之后公开展示或发布基于本项目的衍生作品，**请注明 ESP32 iPhone Agent by Henry Yuan**。
+
+---
+
+## 0. 当前状态（接手必读，2026-11-07 21:00）
+
+**板子现在跑的是坏固件。** 症状：启动日志里
+`E p4_ble: advertising failed: 4`，之后没有任何广播，Mac 和 iPhone 都扫不到板子。
+
+**根因**：为了让 Go CLI 也能发现板子，我曾在广播里同时放入 App 服务（`...0000`）和
+CLI 服务（`...0010`）两个 128 位 UUID——那是 32 字节，超过 BLE 广播 31 字节上限，
+`ble_gap_adv_set_fields()` 返回 `BLE_HS_EMSGSIZE`(4)，整个广播起不来。
+
+**修复已写好但未烧录**：`main/p4_ble.c` 改为**交替广播**——App 服务播 750ms、CLI 服务播
+250ms，单个地址不变（原厂固件就是这么做的，`ADV_CYCLE_MS=1000 / ADV_CLI_MS=250`）。
+代码已编译通过（`iphone_agent_p4.bin` 1.16MB），**但没有烧进板子，也没有验证过**。
+
+**接手第一件事**：
+```bash
+cd hardware/idf && . ~/esp-idf/export.sh
+idf.py -p <port> flash        # <port> 见下方「端口」
+# 然后确认日志出现交替广播，而不是 advertising failed
+grep -a "advertising .* service" <serial log>
+```
+预期看到 `advertising App service` 和 `advertising CLI service` 交替出现。
+
+---
 
 > **服务尚未跑通（2026-11-07 19:00 汇总）**
 > 截至此时间点，**Handsy 服务整体尚未跑起来**，不要把任何单项通过当成可用链路：
@@ -333,3 +362,91 @@ burner.cloudzao.com 的网页烧录器里同样要选对。
   原始声明在 `src/airplay/LICENSE-GPL.md`，分发时需遵守 GPL。
 - 若公开演示或发布衍生作品，需按原项目 `AGENTS.md` 要求署名
   "ESP32 iPhone Agent by Henry Yuan"。
+
+---
+
+## 11. 未加密 CLI 服务与 Mac 侧测试（2026-11-07 新增）
+
+### 为什么需要它
+
+App 的服务（`...0000`）所有特征都带 `*_ENC`，**ATT 层在 `access_cb` 之前就拒绝未加密访问**。
+我试过加应用层开关绕过，确认**结构性不可能**——已撤销该尝试。
+
+真正的出路是原厂就有的 **CLI 服务（`...0010`）**：`cli/internal/ble/ble.go:31` 明确写着
+*"No OS pairing: the board's cli service is reached on its random static address, which
+changes every boot, so no bond ever forms."* 它的特征是**故意不加密**的，认证在应用层
+（X25519 + AES-GCM，`src/cli/cli_proto.c` 已移植并测过 10/10）。
+
+### 实现
+
+`main/p4_ble.c` 新增 CLI 服务，`cli_in`(0011, write) / `cli_out`(0012, notify)，
+无 `*_ENC` 标志。`access_cb` 里 CLI 分支**排在授权门之前**。
+`p4_ble_ops` 新增可选的 `command_cli`，回复走 `p4_ble_cli_out()` 而非 App 的 `reply`。
+
+**真机验证通过**（Mac 当 central，不配对）：
+```
+conn 0 up                          ← 连接
+queued id=1 cmd=ping via_cli=1     ← CLI 写入到达桥
+running id=1 cmd=ping              ← worker 执行
+reply id=1 -> ok                   ← 命令返回
+1 ping       -> 1 ok
+2 move 5 0   -> 2 err phone usb asleep (unlock the phone)
+```
+`phone usb asleep` 是原厂固件的原话——板子插的是调试口不是 OTG 口，HID 报告无处可去，
+**是正确行为**。
+
+### 从 Mac 测试的最小脚本
+
+```python
+import asyncio
+from bleak import BleakScanner, BleakClient
+BASE = "6e400001-a9e8-4b1b-9c39-6d6f8a3c"
+CLI_IN, CLI_OUT = BASE + "0011", BASE + "0012"
+async def main():
+    dev = await BleakScanner.find_device_by_filter(
+        lambda d, a: BASE + "0000" in (a.service_uuids or []), timeout=15)
+    async with BleakClient(dev) as c:
+        r = []
+        await c.start_notify(CLI_OUT, lambda _, d: r.append(bytes(d)))
+        await c.write_gatt_char(CLI_IN, b"1 ping", response=False)
+        for _ in range(40):
+            await asyncio.sleep(0.1)
+            if r: break
+        print("reply:", [x.decode(errors='replace') for x in r])
+asyncio.run(main())
+```
+
+仓库自带的 Go CLI 也可以：`cd cli && go build -o /tmp/esp32agent ./cmd/esp32agent`，
+然后 `/tmp/esp32agent pair`。它按服务 UUID `...0010` 过滤扫描——**这正是广播必须带上
+CLI 服务 UUID 的原因**。
+
+### 广播：为什么必须交替
+
+Go CLI 和 iOS App **都按服务 UUID 过滤扫描**，但一个找 `...0000`、一个找 `...0010`。
+两个 128 位 UUID 同时放进广播 = 32 字节 > 31 字节上限 → `BLE_HS_EMSGSIZE` → 完全不广播。
+所以交替：App 服务 750ms、CLI 服务 250ms，单地址不变。
+
+---
+
+## 12. 本轮调试踩的坑（都值得记）
+
+1. **脚本里一次失败的字符串替换，看起来和成功一模一样。**
+   加 `.via_cli` 的那次 Python 替换静默没匹配上（锚点已被其他改动改掉），导致 `via_cli`
+   永远是 false、回复全发去 App 的 `reply` 特征。日志 `h=18 cli=0 sub=8` 才暴露它——
+   CLI 订阅位设上了，但传入的却不是 `cli_out_handle`。
+   **教训：脚本改代码必须 `assert old in s`，否则静默失败。**
+
+2. **广播包 31 字节上限。** 两个 128 位 UUID 放进去直接让整个广播失败，且报的是
+   `advertising failed: 4`，不告诉你为什么。原厂的交替方案就是为了绕这个。
+
+3. **端口名会随固件变化。** `cu.usbmodem11101` / `1101` 之间反复横跳，烧录到旧名字会
+   静默失败（哈希校验数 0），板子继续跑旧固件，看起来像"改了没生效"。
+   **每次烧录前重新 `ls /dev/cu.usbmodem*`。**
+
+4. **`esp_image: segment 4` 不一定是卡住。** 抓日志窗口太短就会在启动中途（约 200ms）
+   截断，看着像挂了。板子实际要 ~4.5s 才启动完。**抓日志至少 20s。**
+
+5. **`ble_npl_*` 全部经由 `npl_funcs` 函数表转发**，该表要 `nimble_port_init()` 才填充。
+   `esp_hosted_bt_host_stack_setup()` 绑 NimBLE 时并不调它，所以在 `p4_ble_start()`
+   之前调 `ble_npl_event_init()` 会 NULL 解引用（`MTVAL=0x24`）。
+   **顺序必须是先 `p4_ble_start()` 再 `p4_cmd_bridge_start()`。**
