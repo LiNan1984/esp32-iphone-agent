@@ -11,6 +11,11 @@ CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_SPIRAM=y
 
+# One USB HID interface carries keyboard, mouse and consumer-control reports.
+CONFIG_TINYUSB_HID_COUNT=1
+# The board's full-speed internal PHY shares pins with USB Serial/JTAG.
+CONFIG_TINYUSB_MODE_SLAVE=y
+
 # A custom table (partitions.csv) with a 10 MB factory app. The built-in
 # singleapp table gives the app ~1 MB, which the AirPlay receiver + libsodium +
 # NimBLE + hosted stack no longer fit in.
@@ -90,7 +95,14 @@ CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 # dependency. The controller lives on the C5, hence BT_CONTROLLER_DISABLED here.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_MAX_BONDS=8
+CONFIG_BT_NIMBLE_MAX_CCCDS=24
 CONFIG_BT_CONTROLLER_DISABLED=y
+# The controller is reached through ESP-Hosted SDIO, not local HCI UART.
+# Leaving the IDF default enabled defines the transport functions twice when
+# the NimBLE host is actually linked.
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
 CONFIG_ESP_HOSTED_HOST_FEAT_BT=y
 
 # The Arduino build lost every log_i() because this defaults to ERROR.

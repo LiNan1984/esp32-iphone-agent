@@ -30,9 +30,24 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_mac.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "airplay/airplay.h"
+#include "p4_usb_hid.h"
+#include "p4_ble.h"
 
 static const char *TAG = "core";
+
+#if CONFIG_P4_BLE_GATT_DIAGNOSTIC
+static int diag_command(p4_ble_session session, const uint8_t *data, size_t len) {
+  (void)session; (void)data; (void)len; return -1;
+}
+static int diag_read(uint8_t *out, size_t cap, size_t *len) {
+  (void)out; (void)cap; (void)len; return -1;
+}
+static int diag_write(const uint8_t *data, size_t len) { (void)data; (void)len; return -1; }
+static void diag_disconnect(p4_ble_session session) { (void)session; }
+#endif
 
 // cli_proto.c takes its randomness from the caller; on the board that is the RNG.
 void cli_random(uint8_t *p, size_t n) { esp_fill_random(p, n); }
@@ -316,6 +331,27 @@ static void on_au(const uint8_t *au, size_t len, bool idr) {
   gop_fed++;
 }
 
+// Keep the receiver's pairing identity across reboots, as the S3 firmware does.
+// Never erase NVS on an error: it can also contain network and pairing settings.
+static esp_err_t load_airplay_seed(uint8_t seed[32]) {
+  esp_err_t e = nvs_flash_init();
+  if (e != ESP_OK) return e;
+  nvs_handle_t nvs;
+  e = nvs_open("airplay", NVS_READWRITE, &nvs);
+  if (e != ESP_OK) return e;
+  size_t len = 32;
+  e = nvs_get_blob(nvs, "ed_seed", seed, &len);
+  if (e == ESP_ERR_NVS_NOT_FOUND) {
+    esp_fill_random(seed, 32);
+    e = nvs_set_blob(nvs, "ed_seed", seed, 32);
+    if (e == ESP_OK) e = nvs_commit(nvs);
+  } else if (e == ESP_OK && len != 32) {
+    e = ESP_ERR_INVALID_SIZE;
+  }
+  nvs_close(nvs);
+  return e;
+}
+
 static void test_airplay(void) {
   ESP_LOGI(TAG, "airplay receiver (RTSP + mDNS + mirror)");
 
@@ -356,10 +392,11 @@ static void test_airplay(void) {
     if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) memcpy(ac.hwaddr, mac, 6);
     else memcpy(ac.hwaddr, (uint8_t[]){0x80, 0xF1, 0xB2, 0xD2, 0xEC, 0x63}, 6);
   }
-  {
-    // Long-term Ed25519 pairing identity. Must stay stable across boots or every
-    // mirroring session re-pairs; derive it once from the MAC rather than randomly.
-    esp_fill_random(ac.ed25519_seed, sizeof ac.ed25519_seed);
+  e = load_airplay_seed(ac.ed25519_seed);
+  check("AirPlay pairing identity loaded", e == ESP_OK);
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "Cannot load AirPlay identity: %s", esp_err_to_name(e));
+    return;
   }
   ac.width = 480; ac.height = 1040; ac.max_fps = 5;   // the firmware's defaults
   ac.on_config = on_config;
@@ -384,6 +421,21 @@ void app_main(void) {
            heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024,
            heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
 
+#if CONFIG_P4_BLE_GATT_DIAGNOSTIC
+  // The discovery diagnostic must not initialize Wi-Fi or mutate its NVS settings.
+  esp_err_t nvs_err = nvs_flash_init();
+  if (nvs_err != ESP_OK) { ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_err)); return; }
+  test_hosted();
+  test_hosted_bt();
+  const p4_ble_ops ble_diag = {
+    .command = diag_command, .net_read = diag_read, .net_write = diag_write,
+    .status_read = diag_read, .disconnected = diag_disconnect,
+  };
+  esp_err_t ble_err = p4_ble_start(&ble_diag);
+  if (ble_err != ESP_OK) ESP_LOGE(TAG, "BLE diagnostic failed: %s", esp_err_to_name(ble_err));
+  return;
+#endif
+
   // The GOP lives in PSRAM; without it the AirPlay receiver has nowhere to put
   // frames, so say so plainly rather than crashing later.
   g_arena = heap_caps_malloc(GOP_CAP_BYTES, MALLOC_CAP_SPIRAM);
@@ -406,4 +458,13 @@ void app_main(void) {
   }
   ESP_LOGI(TAG, "=== %s (%d failure%s) ===",
            failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
+#if CONFIG_P4_USB_HID_DIAGNOSTIC
+  ESP_LOGI(TAG, "Starting USB HID for 30 seconds: USB Serial/JTAG will disconnect");
+  esp_err_t hid_err = p4_usb_hid_start();
+  if (hid_err == ESP_OK) {
+    vTaskDelay(pdMS_TO_TICKS(30000));
+    hid_err = p4_usb_hid_stop();
+  }
+  if (hid_err != ESP_OK) ESP_LOGE(TAG, "USB HID diagnostic failed: %s", esp_err_to_name(hid_err));
+#endif
 }

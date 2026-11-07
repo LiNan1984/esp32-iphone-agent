@@ -19,3 +19,7 @@ dependencies:
   # ESP_PLATFORM expecting IDF to supply it — so neither side provides it and the
   # link fails on every esp_wifi_* symbol. Pulling it in explicitly closes that gap.
   espressif/esp_wifi_remote: ">=1.0.0,<2.0.0"
+
+  # USB HID device support for the P4 port. USB Serial/JTAG shares its PHY;
+  # the firmware must explicitly switch that PHY before starting TinyUSB.
+  espressif/esp_tinyusb: "^2.2.1"

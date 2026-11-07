@@ -1,8 +1,56 @@
 # 交接文档：esp32-iphone-agent → Metalio Claw 4 (ESP32-P4)
 
 日期：2026-11-07
-状态：**AirPlay 接收链路在真机跑通（56/56 自测全过），BLE / Wi-Fi / HID 三条链路均已验证；
-尚未做 iPhone 实机连接，也未接 USB HID 与 BLE GATT 命令服务。**
+状态：**AirPlay 服务启动、hosted C5 链路、SoftAP、hosted BLE 均在真机自测通过（56/56，
+更早版本固件的证据）。USB HID 与 BLE GATT 服务已实现且能编译，iPhone 也已能发现板子，
+但加密配对、命令传输、视频转发均未验证——服务整体尚未跑通。详见下方汇总。**
+
+> **署名 / Attribution**
+> 本项目基于 [ESP32 iPhone Agent](https://github.com/onehumanbeing/esp32-iphone-agent) by Henry Yuan（MIT）。
+> 若之后公开展示或发布基于本项目的衍生作品，**请注明 ESP32 iPhone Agent by Henry Yuan**。
+
+> **服务尚未跑通（2026-11-07 19:00 汇总）**
+> 截至此时间点，**Handsy 服务整体尚未跑起来**，不要把任何单项通过当成可用链路：
+>
+> - **USB HID**：已实现传输与可选描述符诊断，默认构建和启用 HID 的构建均通过编译；
+>   macOS 真机枚举为 `Handsy / ESP32 Agent` 的键盘+指针。指针/点击/文本/组合键的
+>   命令处理有 host 测试。**尚未接入 BLE 命令队列，未在 iPhone 上实测。**
+> - **BLE**：完整 NimBLE 主机已能链接，`p4_ble.c` 在真机输出 `NimBLE bound to hosted HCI`
+>   与 `Handsy GATT advertising`，iPhone App 的选板页**已能发现**开发板。但**加密配对、
+>   命令传输、通知与视频均未验证**。
+> - **视频转发**：未完成。
+- **host 测试静默通过**：`tests/test_hid_commands` 退出码为 0，但**不打印任何输出**。
+  所以"host 测试通过"这条证据的强度有限——未来若退化成静默失败，看退出码是唯一的信号。
+  值得改成逐条打印 PASS/FAIL。
+> - **屏幕**：原厂主界面已恢复、重启后仍正常；独立测试程序的纯色与棋盘格画面也正常。
+>   **根因未确认，长期稳定性需继续观察。**
+> - **设备状态**：当前运行**已恢复的原厂固件**。完整 Flash 备份在本机受限目录
+>   （含私有设备配置，应限制访问）；诊断期间只覆盖并恢复了应用分区开头，恢复写入通过哈希校验。
+
+> **后续更新：屏幕和构建（2026-11-07）**：原厂固件出现固定竖线时，独立 NV3051F
+> 测试在 IDF 5.5.5（36 / 48 MHz）和 IDF 6.0.2（48 MHz）下的纯色均未见异常；
+> 两个 IDF 版本在 48 MHz 下的棋盘格也正常。
+> 恢复原厂应用后，用户确认主界面恢复正常，且再次重启仍正常；根因和长期稳定性未确定。
+> 测试代码及步骤保存在本机 `~/Desktop/aicode/p4-probe/display-diagnostics/`。
+> 测试前的完整 32 MB 快照位于 `~/Desktop/aicode/p4-probe/backup/flash-before-screen-diagnosis-20261107.bin`，
+> 包含私有设备配置，应限制访问。诊断期间只覆盖并恢复了应用分区开头，恢复写入通过哈希校验。
+>
+> 此后修复了 P4 构建清单遗漏的 `airplay/audio.c`，并让 AirPlay 配对身份持久化到 NVS。
+> 两项均通过 IDF 编译，持久化尚未在板上验证；下述 56/56 日志是更早版本的证据，不能作为新代码的实测证明。
+> 新增实验性 USB HID 传输和可选的 30 秒描述符诊断，默认关闭。独立测试程序在真机
+> 枚举为 macOS USB 设备 `Handsy / ESP32 Agent`，IOHIDDevice 显示键盘和指针集合；
+> 20 秒后恢复 USB Serial/JTAG；随后原厂
+> app 前缀恢复并校验，用户确认屏幕仍正常。尚未在 iPhone 上测试 HID 输入，也尚未
+> 接入 BLE 命令队列，不能视作可用的 USB HID 链路。诊断见本机 `~/Desktop/aicode/p4-probe/usb-diagnostics/`。
+> HID 命令解析与移动节奏已有 host 测试，尚未集成 BLE 或进行 iPhone 实测。
+> 完整 NimBLE 主机接入时还须关闭 `CONFIG_BT_NIMBLE_TRANSPORT_UART`：C5 使用 hosted SDIO，
+> UART 与 hosted 同时启用会重复定义 HCI 函数。原先仅绑定 HCI 的自测没有覆盖此链接冲突。
+> 新增的 `p4_ble.c` 在独立诊断中于真机输出 `NimBLE bound to hosted HCI` 与
+> `Handsy GATT advertising`，用户随后确认 iPhone App 发现了开发板。诊断不处理命令
+> 或提供网络配置；加密配对、通知与视频均未验证。启动日志还报告 host 3.1.0 与 C5 2.12.7 主版本不一致，
+> 暂只看到兼容模式启动，不应据此宣称稳定，也没有升级 C5 固件。
+> 蓝牙诊断改动了 NVS；测试前刚备份的配置区与应用前缀均已写回且分别通过哈希校验。
+> 诊断日志在 `/tmp/p4-ble-monitor.log`；测试前快照及恢复片段在上面的私有 backup 目录。
 
 ---
 

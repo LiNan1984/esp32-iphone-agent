@@ -7,3 +7,7 @@ sdkconfig.old
 managed_components/
 dependencies.lock
 .devcontainer/
+
+# Host test binary and its macOS dSYM debug-symbol bundle.
+tests/test_hid_commands
+tests/*.dSYM/

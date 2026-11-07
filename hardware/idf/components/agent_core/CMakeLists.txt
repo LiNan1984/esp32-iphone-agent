@@ -5,10 +5,6 @@
 # is the evidence that they carry no ESP32-S3 or Arduino dependency: they only
 # use lwIP, FreeRTOS, mbedTLS, esp_timer and the IDF mdns component.
 #
-# Deliberately NOT here yet: the AirPlay server (fairplay/handlers/mirror/
-# pairing/rtsp + the GPL playfair tree) — those need lwIP socket servers and
-# libsodium, and are added once the core links.
-
 # agent_core/ -> components/ -> idf/ -> hardware/  (then the shared src tree)
 set(CORE "${CMAKE_CURRENT_LIST_DIR}/../../../hid_bridge/src")
 
@@ -34,8 +30,10 @@ idf_component_register(
         "${CORE}/bplist/bplist.c"
         "${CORE}/video/gop.c"
         "${CORE}/airplay/keystream.c"
+        "${CORE}/airplay/audio.c"
         "${CORE}/cli/cli_proto.c"
         "${CORE}/hid/arbiter.c"
+        "${CORE}/hid/pace.c"
         "${CORE}/log/logring.c"
         "${CORE}/airplay/mdns.c"
         ${AIRPLAY}
