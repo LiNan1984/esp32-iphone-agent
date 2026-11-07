@@ -46,3 +46,19 @@ config P4_BLE_GATT_SERVICE
         forwarded yet. Encrypted pairing, command transfer and notification have
         NOT been verified on an iPhone, so treat this as experimental despite it
         being the real service.
+
+config P4_BLE_ALLOW_PLAIN_APP
+    bool "DEBUG: let the App service work without encryption"
+    default n
+    help
+        Drops the *_ENC flags from the App service's characteristics, so the
+        iPhone App can read `net` and send commands without pairing.
+
+        This removes the access control that stops a stranger from driving
+        the phone. It exists because iOS pairing could not be completed to
+        verify the rest of the path, and the board now does request pairing
+        on connect (see BLE_GAP_EVENT_CONNECT) — so this is a way to make
+        progress on everything downstream of it, not a fix for pairing.
+
+        Never ship this on. Turn it off and pair properly once iOS pairing
+        works.

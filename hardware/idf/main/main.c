@@ -49,10 +49,14 @@ static bool net_ready = false;
 static char net_json[192];
 
 static int net_read(uint8_t *out, size_t cap, size_t *len) {
-  if (!net_ready || !out || !len || cap == 0) return -1;
-  size_t n = strlen(net_json);
+  if (!out || !len || cap == 0) return -1;
+  // Answer even when Wi-Fi is not up: the App reads this to trigger pairing and
+  // to learn the hotspot credentials, and an ATT error here aborts setup before
+  // it starts. mode "none" says the AP is not up yet.
+  const char *json = net_ready ? net_json : "{\"mode\":\"none\"}";
+  size_t n = strlen(json);
   if (n > cap) n = cap;
-  memcpy(out, net_json, n);
+  memcpy(out, json, n);
   *len = n;
   return 0;
 }

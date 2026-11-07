@@ -121,3 +121,7 @@ CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM=7
 # The real Handsy GATT service + command bridge. Defaults to y in Kconfig; stated
 # here so it is visible. See the Kconfig help for what is and is not verified.
 CONFIG_P4_BLE_GATT_SERVICE=y
+
+# DEBUG ONLY — see the Kconfig help. Lets the App read net / send commands without
+# pairing, so the rest of the path can be verified while iOS pairing is unresolved.
+CONFIG_P4_BLE_ALLOW_PLAIN_APP=y

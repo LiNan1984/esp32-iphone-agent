@@ -51,6 +51,16 @@ static const ble_uuid128_t cli_in_uuid = P4_UUID(0x11);
 static const ble_uuid128_t cli_out_uuid = P4_UUID(0x12);
 
 enum { CH_CMD, CH_STATUS, CH_NET, CH_CLI_IN };
+
+// App-service characteristic flags. The *_ENC variants are what make the ATT
+// layer refuse an unencrypted link — and, as it turns out, they also refuse it
+// before access_cb runs, which is why pairing has to be requested on connect
+// rather than on a refused access.
+#if CONFIG_P4_BLE_ALLOW_PLAIN_APP
+#define APP_CHR_F(plain, enc) (plain)
+#else
+#define APP_CHR_F(plain, enc) ((plain) | (enc))
+#endif
 static bool known_peer(const ble_addr_t *peer) {
     bool found = false;
     portENTER_CRITICAL(&known_lock);
@@ -96,10 +106,16 @@ static int access_cb(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *
         return app.command_cli(active, bytes, len) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
 
+#if CONFIG_P4_BLE_ALLOW_PLAIN_APP
+    // Debug build: the App service is open, so skip the auth gate but still ask
+    // for pairing when we can, so a central that *can* pair still does.
+    if (!authorized(conn)) request_pairing_if_plain(conn);
+#else
     if (!authorized(conn)) {
         request_pairing_if_plain(conn);
         return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     }
+#endif
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
         if (!len || len > MAX_VALUE) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
@@ -122,15 +138,15 @@ static const struct ble_gatt_svc_def services[] = {{
     .type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &service_uuid.u,
     .characteristics = (struct ble_gatt_chr_def[]) {
         {.uuid = &cmd_uuid.u, .access_cb = access_cb, .arg = (void *)CH_CMD,
-         .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC},
+         .flags = APP_CHR_F(BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE, BLE_GATT_CHR_F_WRITE_ENC)},
         {.uuid = &reply_uuid.u, .access_cb = access_cb, .val_handle = &reply_handle,
          .flags = BLE_GATT_CHR_F_NOTIFY},
         {.uuid = &status_uuid.u, .access_cb = access_cb, .arg = (void *)CH_STATUS, .val_handle = &status_handle,
-         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY},
+         .flags = APP_CHR_F(BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY, BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY)},
         {.uuid = &video_uuid.u, .access_cb = access_cb, .val_handle = &video_handle,
          .flags = BLE_GATT_CHR_F_NOTIFY},
         {.uuid = &net_uuid.u, .access_cb = access_cb, .arg = (void *)CH_NET,
-         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
+         .flags = APP_CHR_F(BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE, BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE_ENC)},
         {0}
     },
 },
@@ -311,9 +327,11 @@ static int notify(p4_ble_session session, uint16_t handle, const void *data, siz
                  : handle == video_handle ? 4u : handle == cli_out_handle ? 8u : 0;
     // The CLI channel is unencrypted by design, so it is exempt from the auth gate.
     bool cli = handle == cli_out_handle;
+    // The App service's notify path keeps its auth gate even in the plain-App
+    // debug build, which silently swallowed every reply. Mirror access_cb.
+    bool authed = cli || !CONFIG_P4_BLE_ALLOW_PLAIN_APP ? authorized(session.conn) : true;
     if (!data || !len || len > UINT16_MAX || session.conn != active.conn ||
-        session.generation != active.generation || !(subscriptions & bit) ||
-        (!cli && !authorized(session.conn))) {
+        session.generation != active.generation || !(subscriptions & bit) || !authed) {
         ESP_LOGW(TAG, "notify refused h=%u cli=%d conn=%u/%u gen=%u/%u sub=%u",
                  handle, (int)cli, session.conn, active.conn,
                  session.generation, active.generation, subscriptions);
