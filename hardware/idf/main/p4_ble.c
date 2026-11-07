@@ -127,10 +127,11 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
     (void)arg;
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
-        if (event->connect.status != 0) advertise();
-        else if (active.conn != event->connect.conn_handle) {
+        if (event->connect.status != 0) { ESP_LOGW(TAG, "connect failed: %d", event->connect.status); advertise(); }
+        else { ESP_LOGI(TAG, "conn %u up", event->connect.conn_handle);
+               if (active.conn != event->connect.conn_handle) {
             active.conn = event->connect.conn_handle; ++active.generation; subscriptions = 0;
-        }
+        } }
         break;
     case BLE_GAP_EVENT_DISCONNECT:
         app.disconnected(active);
@@ -163,7 +164,18 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
             added = true;
         }
         portEXIT_CRITICAL(&known_lock);
-        if (!added) { ble_store_util_delete_peer(&d.peer_id_addr); ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM); }
+        if (!added) {
+            ble_store_util_delete_peer(&d.peer_id_addr);
+            // Say why, or a failed pairing attempt is invisible in the log and
+            // looks like the board simply not being there.
+            int64_t left_ms = (PAIR_WINDOW_US - (esp_timer_get_time() - pair_opened)) / 1000;
+            if (!in_window) ESP_LOGW(TAG, "pairing refused: window closed %llds ago, power-cycle to reopen", -left_ms / 1000);
+            else if (known_count >= MAX_BONDS) ESP_LOGW(TAG, "pairing refused: %d bonds stored, `unpair` to make room", MAX_BONDS);
+            else ESP_LOGW(TAG, "pairing refused");
+            ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
+        } else {
+            ESP_LOGI(TAG, "peer bonded and accepted");
+        }
         break;
     }
     case BLE_GAP_EVENT_REPEAT_PAIRING: return BLE_GAP_REPEAT_PAIRING_IGNORE;
