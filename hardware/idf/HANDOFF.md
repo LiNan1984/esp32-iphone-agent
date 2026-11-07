@@ -4,9 +4,14 @@
 状态：**⚠️ 板子当前烧着的是坏固件——广播失败（`advertising failed: 4`），任何客户端都发现不了它。
 修复代码已写好、能编译，但尚未烧录验证。烧录前请先读下面「当前状态」。**
 
-已验证：BLE 命令往返真机通过（Mac 不配对，`1 ping` → `1 ok`）；hosted C5 链路、SoftAP、
-AirPlay 服务启动均通过；60/60 自测，0 崩溃。
-未验证：App 的加密配对、视频流、HID 报告送达 iPhone。
+已验证（全部真机）：
+- **iOS App 的完整连接序列**——按服务 UUID `...0000` 扫描 → 连接 → 订阅
+  `reply`/`status`/`video` 三个通知 → 读 `net` 被拒（未加密，这一步就是触发
+  iOS 配对弹窗的动作）。即 App 路径已验证到配对弹窗为止。
+- **BLE 命令往返**——CLI 服务不配对，`9 ping` → `9 ok`。
+- hosted C5 链路、SoftAP、AirPlay 服务启动、交替广播；60/60 自测，0 崩溃。
+
+未验证：iOS 完成 SMP 加密配对、视频流、HID 报告送达 iPhone。
 
 > **署名 / Attribution**
 > 本项目基于 [ESP32 iPhone Agent](https://github.com/onehumanbeing/esp32-iphone-agent) by Henry Yuan（MIT）。
