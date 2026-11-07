@@ -1,0 +1,107 @@
+# Metalio Claw4 target: ESP32-P4 + ESP32-C5 over ESP-Hosted SDIO.
+# Kept deliberately small for now — this milestone only proves the portable C
+# core links and runs on P4. Hosted Wi-Fi/BLE and TinyUSB HID are added later
+# (see docs/superpowers/specs/2026-11-07-p4-port-design.md).
+
+CONFIG_IDF_TARGET="esp32p4"
+
+# 32 MB flash / 32 MB PSRAM, matching the board (verified by the P4 probe).
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_SPIRAM=y
+
+# A custom table (partitions.csv) with a 10 MB factory app. The built-in
+# singleapp table gives the app ~1 MB, which the AirPlay receiver + libsodium +
+# NimBLE + hosted stack no longer fit in.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# P4-specific: the partition table lives at 0x9000, not the IDF default 0x8000
+# (confirmed on the real board). The P4 bootloader is ~24.5 KB and does not fit
+# in 0x8000, so leaving the default fails the bootloader size check.
+CONFIG_PARTITION_TABLE_OFFSET=0x9000
+
+# P4 silicon below v3.0. The board in hand is rev v1.3, and IDF 5.5.5 otherwise
+# stamps the images with "chip revision v3.1 - v3.99", which esptool refuses to
+# flash ("bootloader.bin requires chip revision in range v3.1 - v3.99 (this chip
+# is revision v1.3)"). The original factory firmware's bootloader header says
+# v0.0 - v1.99, which is what this selects. This is the IDF equivalent of
+# arduino-esp32's ChipVariant=prev3 (the esp32p4_es variant).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+# Pre-v3 parts run at 360 MHz; the 400 MHz force option is deliberately off.
+# CONFIG_ESP_FORCE_400MHZ_ON_REV_LESS_V3 is not set
+
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# The P4 main task defaults to ~4 KB, which the self-test overflowed (stack
+# protection fault). The real firmware runs RTSP/mirror/video servers on top of
+# this, so give it room from the start.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# --- ESP-Hosted: the ESP32-C5 companion over SDIO -------------------------
+# The P4 has no radio of its own. Metalio Claw4 pairs it with an ESP32-C5 over
+# 4-bit SDIO; esp_wifi_remote then presents the normal esp_wifi API.
+#
+# Pins are the board's real wiring (its README, and confirmed by probing:
+# "Identified slave [esp32c5]"). None of the upstream board presets match — the
+# closest, ESP_HOSTED_P4_C5_CORE_BOARD, has CLK/CMD swapped and different D1/D2 —
+# so they are set explicitly.
+CONFIG_ESP_HOSTED_ENABLED=y
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32C5=y
+CONFIG_ESP_HOSTED_IDF_SLAVE_TARGET="esp32c5"
+# esp_wifi_remote DRIVES the hosted coprocessor target through its own
+# SLAVE_IDF_TARGET choice (see the ESP_HOSTED_CP_TARGET help: "go to Wi-Fi Remote
+# -> choose slave target"). Left alone it defaults to ESP32-C6, and the link then
+# dies with "chip mismatch: expect=0x0d got=0x17" against this board's C5.
+CONFIG_SLAVE_IDF_TARGET_ESP32C5=y
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_NONE=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+# The board's reset line is active HIGH (from its own sdkconfig).
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+
+CONFIG_ESP_HOSTED_HOST_SDIO_PIN_CLK=51
+CONFIG_ESP_HOSTED_HOST_SDIO_PIN_CMD=50
+CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D0=49
+CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D1=34
+CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D2=31
+CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D3=53
+# Note the name: the reset line is ESP_HOSTED_HOST_RESET_GPIO, not
+# ESP_HOSTED_HOST_SDIO_PIN_RESET (that symbol does not exist and is silently
+# dropped, which would leave the C5 held in reset).
+CONFIG_ESP_HOSTED_HOST_RESET_GPIO=54
+
+
+# Wi-Fi Remote is what actually serves the esp_wifi API here (the radio is on
+# the C5). Its Kconfig is what defines the CONFIG_ESP_WIFI_* buffer options that
+# esp_wifi.h needs — it does so under "if !ESP_WIFI_ENABLED", so ESP_WIFI_ENABLED
+# must stay n. The board's own firmware enables exactly these three.
+CONFIG_ESP_WIFI_REMOTE_ENABLED=y
+CONFIG_ESP_WIFI_REMOTE_IDF_SPECIFIC_ADDED=y
+CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
+
+# --- hosted Bluetooth over the same SDIO bus -------------------------------
+# The C5's own firmware already advertises "HCI over SDIO" (verified on the real
+# board), so BLE needs no coprocessor reflash: only the host side has to enable
+# it. IDF 5.5 ships the NimBLE host stack in components/bt, so no extra managed
+# dependency. The controller lives on the C5, hence BT_CONTROLLER_DISABLED here.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_ESP_HOSTED_HOST_FEAT_BT=y
+
+# The Arduino build lost every log_i() because this defaults to ERROR.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# src/cli/cli_proto.c derives its session keys with HKDF-SHA256 (RFC 5869).
+# ESP-IDF's mbedtls gates hkdf.c behind this, so without it the link fails with
+# "undefined reference to mbedtls_hkdf". The host build never hit this because
+# Homebrew's mbedtls always ships HKDF.
+CONFIG_MBEDTLS_HKDF_C=y
+
+# Two options esp_wifi.h needs that the remote Kconfig does not define.
+CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUF=0
+CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM=7

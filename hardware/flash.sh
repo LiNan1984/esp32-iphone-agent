@@ -5,13 +5,19 @@
 #   --sta         test build: join the Wi-Fi in hid_bridge/secrets.h instead of opening a hotspot
 #   --build-only  compile only (prints flash/RAM usage)
 #   --ap-tune     A/B build: hotspot on a 20 MHz channel with 300 TU beacons (more airtime for BLE)
+#   --p4 / --s3   target chip; --s3 is the default and keeps the original behaviour
 # BLE host: h2zero NimBLE-Arduino (arduino-cli lib install "NimBLE-Arduino"); its buffer sizes live in
 # hid_bridge/nimble_cfg.h, force-included into every C/C++ file below.
 # A running bridge is a TinyUSB device, so it is first kicked into the ROM
 # bootloader with a 1200-baud touch; a blank board is flashed directly.
+#
+# Targets: --s3 (default, the original XIAO ESP32S3 board) or --p4 (ESP32-P4).
+# The P4 port lives in docs/superpowers/specs/2026-11-07-p4-port-design.md; the
+# short version is that P4 has no radio of its own and needs an ESP32-C6 over
+# SDIO, so --p4 alone does not give a working board.
 set -euo pipefail
 cd "$(dirname "$0")"
-FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=cdc,FlashSize=8M,PSRAM=opi,PartitionScheme=default_8MB"
+TARGET="${TARGET:-s3}"
 ports() { for p in /dev/cu.usbmodem* /dev/ttyACM*; do [[ -e $p ]] && echo "$p"; done; return 0; }
 PORT="" DEFS="" BUILD_ONLY=0
 for a in "$@"; do
@@ -23,9 +29,28 @@ for a in "$@"; do
     --ap-tune) DEFS+=" -DAP_TUNE=1" ;;
     --crash-test) DEFS+=" -DOTA_CRASH_TEST=1" ;;  # build only, then push it with ota_push.py
     --small-gop) DEFS+=" -DGOP_CAP_KB=256" ;;  # test build: the GOP fills (freezes) within minutes
+    --p4) TARGET=p4 ;;
+    --s3) TARGET=s3 ;;
     *) PORT=$a ;;
   esac
 done
+
+# DebugLevel=info is load-bearing, not cosmetics: without it arduino-cli builds
+# with the log level at ERROR and every log_i()/Serial.printf() is dropped at
+# COMPILE time, so a running firmware looks silent. Both targets need it.
+case $TARGET in
+  s3) FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=cdc,FlashSize=8M,PSRAM=opi,PartitionScheme=default_8MB,DebugLevel=info" ;;
+  p4)
+    # ChipVariant=prev3 is required for silicon below rev v3.0: it selects the
+    # esp32p4_es variant (360 MHz, different memory layout and prebuilt libs).
+    # PSRAM=enabled, not opi — P4 has 16-line HEX PSRAM and no opi/qspi choice.
+    # app13M_data7M_32MB keeps the same shape as the S3 default_8MB table:
+    # otadata + two ota app slots + coredump.
+    FQBN="esp32:esp32:esp32p4:USBMode=default,CDCOnBoot=cdc,FlashSize=32M,PSRAM=enabled,ChipVariant=prev3,FlashMode=qio,FlashFreq=80,PartitionScheme=app13M_data7M_32MB,DebugLevel=info" ;;
+  *) echo "unknown target '$TARGET' (want s3 or p4)"; exit 1 ;;
+esac
+echo "target: $TARGET"
+echo "fqbn:   $FQBN"
 [[ $PWD != *" "* ]] || { echo "the -include path below cannot contain spaces: $PWD"; exit 1; }
 DEFS+=" -include $PWD/hid_bridge/nimble_cfg.h"
 FLAGS=(--build-property "compiler.cpp.extra_flags=$DEFS" --build-property "compiler.c.extra_flags=$DEFS")

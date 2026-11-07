@@ -1,0 +1,15 @@
+# Partition table for the esp32-iphone-agent port on Metalio Claw4.
+#
+# The board has 32 MB of flash, and this firmware pulls in a lot more than the
+# original sketch did once the AirPlay receiver, libsodium, NimBLE and the
+# hosted stack are all linked: it no longer fits the ~1 MB that IDF's built-in
+# singleapp table gives the app. So a custom table with a large factory app,
+# matching the board's own shape (a single factory app, no OTA).
+#
+# The table itself lives at 0x9000 (CONFIG_PARTITION_TABLE_OFFSET), so the first
+# partition starts at 0xA000.
+# Name        Type     Subtype     Offset      Size
+nvs,          data,    nvs,         0xA000,     512K,
+phy_init,     data,    phy,         0x8A000,     4K,
+factory,      app,     factory,     0x100000,   10M,
+coredump,     data,    coredump,     0x1600000,  64K,

@@ -1,0 +1,35 @@
+# The CONFIG_ESP_WIFI_* options that esp_wifi.h needs, on a target whose radio is
+# not local.
+#
+# On a chip with its own radio these live inside "if (ESP_WIFI_ENABLED ||
+# ESP_HOST_WIFI_ENABLED)". Under hosted Wi-Fi (radio on the ESP32-C5)
+# ESP_WIFI_ENABLED stays n, and esp_wifi_remote re-declares only *some* of them
+# under "if !ESP_WIFI_ENABLED" — which ones appears to shift between IDF
+# point releases. Rather than depend on that partial, shifting coverage, define
+# the full set here so esp_wifi.h always compiles.
+#
+# All defaults match the board's own firmware. ESP-NOW is not available through
+# ESP-Hosted, so its value is inert.
+menu "Hosted Wi-Fi buffer options"
+
+    config ESP_WIFI_STATIC_RX_BUFFER_NUM
+        int "Max number of WiFi static RX buffers"
+        default 16
+
+    config ESP_WIFI_DYNAMIC_RX_BUFFER_NUM
+        int "Max number of WiFi dynamic RX buffers"
+        default 32
+
+    config ESP_WIFI_TX_BUFFER_TYPE
+        int "WiFi TX buffer type"
+        default 0
+
+    config ESP_WIFI_DYNAMIC_RX_MGMT_BUF
+        int "Dynamic RX management buffer count"
+        default 0
+
+    config ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM
+        int "ESP-NOW max encrypt number"
+        default 7
+
+endmenu

@@ -1,0 +1,21 @@
+dependencies:
+  # mDNS moved out of the ESP-IDF core into the component registry in 5.x, so it
+  # has to be pulled in explicitly. src/airplay/mdns.c uses only the standard
+  # API (mdns_init / mdns_start / mdns_service_add / mdns_txt_item_t).
+  espressif/mdns: ">=1.0.0,<2.0.0"
+
+  # The P4 has no radio; the ESP32-C5 companion over SDIO provides Wi-Fi (and,
+  # once BT is enabled on both sides, BLE). esp_wifi_remote presents the normal
+  # esp_wifi API on top of it.
+  espressif/esp_hosted: ">=3.1.0,<4.0.0"
+
+  # src/airplay/pairing.c does the AirPlay legacy pair-setup with libsodium
+  # (X25519 + Ed25519). Pulling the real library keeps that file unchanged.
+  espressif/libsodium: ">=1.0.20,<2.0.0"
+
+  # The esp_wifi_* implementation. IDF 5.5's esp_wifi component ships headers only
+  # when Wi-Fi is not enabled ("implementation supported optionally in a managed
+  # component esp_wifi_remote"), and esp_hosted's own wrapper early-returns on
+  # ESP_PLATFORM expecting IDF to supply it — so neither side provides it and the
+  # link fails on every esp_wifi_* symbol. Pulling it in explicitly closes that gap.
+  espressif/esp_wifi_remote: ">=1.0.0,<2.0.0"
