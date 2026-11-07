@@ -69,12 +69,16 @@ static void request_pairing_if_plain(uint16_t conn) {
 
 static int access_cb(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *ctxt, void *arg) {
     (void)attr;
+    const uintptr_t kind = (uintptr_t)arg;
     if (conn != active.conn) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+    // Rejected here, but note that an encrypted characteristic is refused by the
+    // ATT layer before this callback runs at all — BLE_GATT_CHR_F_WRITE_ENC on the
+    // characteristic is what produces "Insufficient Encryption". An application-level
+    // bypass therefore cannot work, which is the correct outcome.
     if (!authorized(conn)) {
         request_pairing_if_plain(conn);
         return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     }
-    const uintptr_t kind = (uintptr_t)arg;
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
         if (!len || len > MAX_VALUE) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
