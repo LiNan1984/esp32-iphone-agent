@@ -19,6 +19,10 @@ typedef struct {
 
 // NVS and the ESP-Hosted HCI binding must be initialized by the caller first.
 esp_err_t p4_ble_start(const p4_ble_ops *ops);
+// The session currently allowed to receive notifications, or a zeroed session
+// (conn == BLE_HS_CONN_HANDLE_NONE) when there is none.
+p4_ble_session p4_ble_active_session(void);
+
 // Call notification functions on the NimBLE host task only: a worker must post
 // an event to that task. Accepted only for the same encrypted, bonded session.
 int p4_ble_reply(p4_ble_session session, const void *data, size_t len);

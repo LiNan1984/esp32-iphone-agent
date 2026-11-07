@@ -218,6 +218,8 @@ static int notify(p4_ble_session session, uint16_t handle, const void *data, siz
     struct os_mbuf *om = ble_hs_mbuf_from_flat(data, (uint16_t)len);
     return om ? ble_gatts_notify_custom(session.conn, handle, om) : BLE_HS_ENOMEM;
 }
+p4_ble_session p4_ble_active_session(void) { return active; }
+
 int p4_ble_reply(p4_ble_session session, const void *data, size_t len) { return notify(session, reply_handle, data, len); }
 int p4_ble_status(p4_ble_session session, const void *data, size_t len) { return notify(session, status_handle, data, len); }
 int p4_ble_video(p4_ble_session session, const void *data, size_t len) { return notify(session, video_handle, data, len); }

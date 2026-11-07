@@ -1,6 +1,7 @@
 // HID command semantics adapted from hardware/hid_bridge/hid_bridge.ino.
 #include "p4_hid_commands.h"
 #include "p4_usb_hid.h"
+#include "p4_video.h"
 #include "hid/pace.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -102,6 +103,12 @@ const char *p4_hid_command(const char *line) {
     const char *arg = space ? space + 1 : "";
 #define CMD(s) (len == sizeof(s)-1 && !memcmp(line, s, sizeof(s)-1))
     if (CMD("ping")) return "ok";
+    if (CMD("stream")) {
+        if (!strcmp(arg, "on")) { p4_video_stream(true); return "ok"; }
+        if (!strcmp(arg, "off")) { p4_video_stream(false); return "ok"; }
+        return "err usage: stream on|off";
+    }
+    if (CMD("snap")) { p4_video_snap(); return "ok"; }
     if (CMD("pace")) {
         static char version[24];
         snprintf(version, sizeof(version), "ok %d", PACE_VERSION);

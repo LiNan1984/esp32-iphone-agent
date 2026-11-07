@@ -37,6 +37,7 @@
 #include "p4_ble.h"
 #include "p4_cmd_bridge.h"
 #include "p4_serial_cmds.h"
+#include "p4_video.h"
 
 static const char *TAG = "core";
 
@@ -92,7 +93,7 @@ static int failures = 0;
 #define GOP_MAX_AUS   8192
 static uint8_t *g_arena;
 static gop_au *g_aus;
-static gop_buf g_gop;
+gop_buf g_gop;
 static uint32_t gop_fed = 0, gop_dropped = 0;
 static void check(const char *what, bool ok) {
   ESP_LOGI(TAG, "  %-46s %s", what, ok ? "PASS" : "FAIL");
@@ -477,6 +478,7 @@ void app_main(void) {
     // The serial path is independent of BLE, so it works even when no central
     // will complete pairing.
     if (p4_serial_cmds_start() != ESP_OK) ESP_LOGE(TAG, "serial commands failed to start");
+    if (p4_video_start() != ESP_OK) ESP_LOGE(TAG, "video forwarding failed to start");
   }
 #endif
 
