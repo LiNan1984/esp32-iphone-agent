@@ -35,19 +35,47 @@
 #include "airplay/airplay.h"
 #include "p4_usb_hid.h"
 #include "p4_ble.h"
+#include "p4_cmd_bridge.h"
 
 static const char *TAG = "core";
 
-#if CONFIG_P4_BLE_GATT_DIAGNOSTIC
-static int diag_command(p4_ble_session session, const uint8_t *data, size_t len) {
-  (void)session; (void)data; (void)len; return -1;
+// --- net characteristic (SoftAP credentials + vtok) -------------------------
+// The App reads this over the encrypted link to learn the hotspot password, and
+// writes it to switch AP/STA. Filled in once Wi-Fi is up; empty until then, which
+// is the same as the original firmware before its first `net` read.
+static bool net_ready = false;
+static char net_json[192];
+
+static int net_read(uint8_t *out, size_t cap, size_t *len) {
+  if (!net_ready || !out || !len || cap == 0) return -1;
+  size_t n = strlen(net_json);
+  if (n > cap) n = cap;
+  memcpy(out, net_json, n);
+  *len = n;
+  return 0;
 }
-static int diag_read(uint8_t *out, size_t cap, size_t *len) {
-  (void)out; (void)cap; (void)len; return -1;
+
+static int net_write(const uint8_t *data, size_t len) {
+  // Accepted but not acted on yet: switching AP/STA needs the Wi-Fi stack wired
+  // to a persistent config, which is the next step. Say so rather than lying.
+  ESP_LOGW(TAG, "net write (%u bytes) ignored: AP/STA switching not wired yet", (unsigned)len);
+  (void)data;
+  return -1;
 }
-static int diag_write(const uint8_t *data, size_t len) { (void)data; (void)len; return -1; }
-static void diag_disconnect(p4_ble_session session) { (void)session; }
-#endif
+
+static int status_read(uint8_t *out, size_t cap, size_t *len) {
+  if (!out || !len || cap == 0) return -1;
+  // The compact form: the full JSON does not fit a small MTU, and the App treats
+  // a short status the same way the original firmware's reduced object does.
+  int n = snprintf((char *)out, cap,
+                   "{\"fw\":\"p4\",\"usb\":\"%s\",\"net\":\"%s\",\"psram\":%u}",
+                   p4_usb_hid_ready() ? "ok" : "off",
+                   net_ready ? "ap" : "none",
+                   (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+  if (n < 0) return -1;
+  *len = (size_t)n < cap ? (size_t)n : cap;
+  return 0;
+}
 
 // cli_proto.c takes its randomness from the caller; on the board that is the RNG.
 void cli_random(uint8_t *p, size_t n) { esp_fill_random(p, n); }
@@ -427,9 +455,12 @@ void app_main(void) {
   if (nvs_err != ESP_OK) { ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_err)); return; }
   test_hosted();
   test_hosted_bt();
+  esp_err_t bridge_err = p4_cmd_bridge_start();
+  if (bridge_err != ESP_OK) ESP_LOGE(TAG, "command bridge failed: %s", esp_err_to_name(bridge_err));
+
   const p4_ble_ops ble_diag = {
-    .command = diag_command, .net_read = diag_read, .net_write = diag_write,
-    .status_read = diag_read, .disconnected = diag_disconnect,
+    .command = p4_cmd_bridge_command, .net_read = net_read, .net_write = net_write,
+    .status_read = status_read, .disconnected = p4_cmd_bridge_disconnected,
   };
   esp_err_t ble_err = p4_ble_start(&ble_diag);
   if (ble_err != ESP_OK) ESP_LOGE(TAG, "BLE diagnostic failed: %s", esp_err_to_name(ble_err));

@@ -19,6 +19,19 @@
 >   与 `Handsy GATT advertising`，iPhone App 的选板页**已能发现**开发板。但**加密配对、
 >   命令传输、通知与视频均未验证**。
 > - **视频转发**：未完成。
+- **BLE 命令 → USB HID 已接通（代码层面，未上板）**：新增 `main/p4_cmd_bridge.c`。
+  App 写 `<id> <command>` 到 `cmd` 特征 → 拆出 id → 入队 → worker 任务执行
+  `p4_hid_command()` → 拼回 `<id> <reply>` → 投递回 NimBLE host task → `reply` 特征通知。
+  之所以要 worker + 事件回投：p4_ble 的回调跑在 NimBLE host task 上不能阻塞，而原固件的
+  `move` 会按 10 单位/步 deliberate pacing（`pace_start`/`pace_next`），长拖动要几百毫秒；
+  而回复必须在 host task 上通知（`ble_gatts_notify_custom` 分配 mbuf，跨任务不安全）。
+  回投用的是 `ble_hs_evq_get()` + `ble_npl_eventq_put()`——`ble_hs_event_enqueue()` 虽然
+  名字更直接，但它的 `struct os_event` 在 IDF 的 bt 组件里**没有定义**（MyNewt sys 库的类型，
+  ESP-IDF 用 `ble_npl` 垫层替代），实际不可用。
+  **未在板上运行，未在 iPhone 上验证。**
+- **net / status 特征已有实现但 deliberately 保守**：`net_read` 返回 SoftAP 凭据 + vtok
+  （Wi-Fi 起来后填充），`net_write` 目前**只记日志不生效**（AP/STA 切换还没接持久化配置），
+  `status_read` 返回紧凑 JSON。
 - **host 测试静默通过**：`tests/test_hid_commands` 退出码为 0，但**不打印任何输出**。
   所以"host 测试通过"这条证据的强度有限——未来若退化成静默失败，看退出码是唯一的信号。
   值得改成逐条打印 PASS/FAIL。
