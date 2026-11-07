@@ -184,10 +184,19 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status != 0) { ESP_LOGW(TAG, "connect failed: %d", event->connect.status); advertise(); }
-        else { ESP_LOGI(TAG, "conn %u up", event->connect.conn_handle);
-               if (active.conn != event->connect.conn_handle) {
-            active.conn = event->connect.conn_handle; ++active.generation; subscriptions = 0;
-        } }
+        else {
+            ESP_LOGI(TAG, "conn %u up", event->connect.conn_handle);
+            if (active.conn != event->connect.conn_handle) {
+                active.conn = event->connect.conn_handle; ++active.generation; subscriptions = 0;
+            }
+            // Ask for encryption as soon as the link is up, NOT when an
+            // encrypted characteristic is touched. An *_ENC characteristic is
+            // refused by the ATT layer before access_cb runs, so initiating
+            // pairing there never happens and the central is left with
+            // "Encryption is insufficient" and no pairing prompt. That is
+            // exactly what the iPhone reported.
+            if (active.conn != BLE_HS_CONN_HANDLE_NONE) request_pairing_if_plain(active.conn);
+        }
         break;
     case BLE_GAP_EVENT_DISCONNECT:
         app.disconnected(active);
