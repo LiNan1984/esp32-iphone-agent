@@ -110,6 +110,19 @@ const char *p4_hid_command(const char *line) {
         return "err usage: stream on|off";
     }
     if (CMD("snap")) { p4_video_snap(); return "ok"; }
+    if (CMD("hid")) {
+        // Takes over the PHY the debug console uses: after this the serial port
+        // is gone, so the only way back is \`hid off\` over the CLI service.
+        if (!strcmp(arg, "on")) {
+            esp_err_t e = p4_usb_hid_start();
+            return e == ESP_OK ? "ok hid on (serial console lost)" : "err hid start failed";
+        }
+        if (!strcmp(arg, "off")) {
+            esp_err_t e = p4_usb_hid_stop();
+            return e == ESP_OK ? "ok hid off (serial console back)" : "err hid stop failed";
+        }
+        return p4_usb_hid_ready() ? "ok on" : "ok off";
+    }
     if (CMD("unpair")) {
         esp_err_t e = p4_ble_unpair();
         return e == ESP_OK ? "ok" : "err unpair failed";

@@ -34,15 +34,6 @@ menu "Hosted Wi-Fi buffer options"
 
 endmenu
 
-config P4_USB_HID_DIAGNOSTIC
-    bool "Start experimental USB HID after self-tests"
-    default n
-    help
-        Switch the shared USB Serial/JTAG PHY to the USB HID device after
-        self-tests. The debug serial port disappears for 30 seconds, then
-        the diagnostic restores it. This only exposes HID descriptors; BLE
-        commands are not wired yet.
-
 config P4_BLE_GATT_SERVICE
     bool "Start the Handsy BLE GATT service"
     default y
@@ -50,7 +41,8 @@ config P4_BLE_GATT_SERVICE
         Register and advertise the Handsy GATT service and run the command bridge
         (cmd characteristic -> USB HID -> reply characteristic).
 
-        Commands and replies are wired; net_write (AP/STA switching) is accepted
-        but not acted on, and video is not forwarded yet. Encrypted pairing,
-        command transfer and notification have NOT been verified on an iPhone,
-        so treat this as experimental despite it being the real service.
+        Commands and replies are wired and verified from the Mac; net_write
+        (AP/STA switching) is accepted but not acted on, and video is not
+        forwarded yet. Encrypted pairing, command transfer and notification have
+        NOT been verified on an iPhone, so treat this as experimental despite it
+        being the real service.

@@ -505,13 +505,8 @@ void app_main(void) {
   }
   ESP_LOGI(TAG, "=== %s (%d failure%s) ===",
            failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
-#if CONFIG_P4_USB_HID_DIAGNOSTIC
-  ESP_LOGI(TAG, "Starting USB HID for 30 seconds: USB Serial/JTAG will disconnect");
-  esp_err_t hid_err = p4_usb_hid_start();
-  if (hid_err == ESP_OK) {
-    vTaskDelay(pdMS_TO_TICKS(30000));
-    hid_err = p4_usb_hid_stop();
-  }
-  if (hid_err != ESP_OK) ESP_LOGE(TAG, "USB HID diagnostic failed: %s", esp_err_to_name(hid_err));
-#endif
+  // USB HID is NOT started here. Starting it takes over the PHY the debug
+  // console uses, so the serial port disappears — which would make the board
+  // undebuggable. It is switched on at runtime with the \`hid on\` command, over
+  // the CLI service or the serial console. See p4_hid_commands.c.
 }
