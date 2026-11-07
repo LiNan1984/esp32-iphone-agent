@@ -2,6 +2,7 @@
 #include "p4_hid_commands.h"
 #include "p4_usb_hid.h"
 #include "p4_video.h"
+#include "p4_ble.h"
 #include "hid/pace.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -109,6 +110,10 @@ const char *p4_hid_command(const char *line) {
         return "err usage: stream on|off";
     }
     if (CMD("snap")) { p4_video_snap(); return "ok"; }
+    if (CMD("unpair")) {
+        esp_err_t e = p4_ble_unpair();
+        return e == ESP_OK ? "ok" : "err unpair failed";
+    }
     if (CMD("pace")) {
         static char version[24];
         snprintf(version, sizeof(version), "ok %d", PACE_VERSION);

@@ -197,6 +197,20 @@ static int store_status(struct ble_store_status_event *event, void *arg) {
     return event->event_code == BLE_STORE_EVENT_FULL ? 0 : BLE_HS_ESTORE_CAP;
 }
 
+esp_err_t p4_ble_unpair(void) {
+    portENTER_CRITICAL(&known_lock);
+    known_count = 0;
+    portEXIT_CRITICAL(&known_lock);
+    int rc = ble_store_clear();
+    pair_opened = esp_timer_get_time();   // reopen the window immediately
+    if (active.conn != BLE_HS_CONN_HANDLE_NONE) {
+        ble_gap_terminate(active.conn, BLE_ERR_REM_USER_CONN_TERM);
+        active.conn = BLE_HS_CONN_HANDLE_NONE;
+    }
+    ESP_LOGI(TAG, "bonds cleared, pairing window reopened");
+    return rc == 0 ? ESP_OK : ESP_FAIL;
+}
+
 esp_err_t p4_ble_start(const p4_ble_ops *ops) {
     if (started) return ESP_ERR_INVALID_STATE;
     if (!ops || !ops->command || !ops->net_read || !ops->net_write || !ops->status_read || !ops->disconnected) return ESP_ERR_INVALID_ARG;

@@ -17,6 +17,10 @@ typedef struct {
     void (*disconnected)(p4_ble_session session);
 } p4_ble_ops;
 
+// Forget every bond and restart advertising. Reopens the pairing window without
+// a power cycle, which matters because the window is only 3 minutes.
+esp_err_t p4_ble_unpair(void);
+
 // NVS and the ESP-Hosted HCI binding must be initialized by the caller first.
 esp_err_t p4_ble_start(const p4_ble_ops *ops);
 // The session currently allowed to receive notifications, or a zeroed session
