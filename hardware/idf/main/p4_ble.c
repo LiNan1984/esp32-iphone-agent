@@ -55,9 +55,25 @@ static bool authorized(uint16_t conn) {
     struct ble_gap_conn_desc d;
     return ble_gap_conn_find(conn, &d) == 0 && d.sec_state.encrypted && d.sec_state.bonded && known_peer(&d.peer_id_addr);
 }
+// Ask the central to pair when it touches an encrypted characteristic over a
+// plain link. The original firmware relies on iOS doing this on its own (its
+// onWrite just returns early when !isEncrypted), which works for the iPhone but
+// leaves every other central stuck at "Insufficient Encryption" with no prompt.
+// Requesting it explicitly is what makes macOS/Android/Linux usable too.
+static void request_pairing_if_plain(uint16_t conn) {
+    struct ble_gap_conn_desc d;
+    if (ble_gap_conn_find(conn, &d) != 0 || d.sec_state.encrypted) return;
+    if (ble_gap_security_initiate(conn) != 0) return;   // already in progress
+    ESP_LOGI(TAG, "requested pairing for conn %u", conn);
+}
+
 static int access_cb(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *ctxt, void *arg) {
     (void)attr;
-    if (conn != active.conn || !authorized(conn)) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+    if (conn != active.conn) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+    if (!authorized(conn)) {
+        request_pairing_if_plain(conn);
+        return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+    }
     const uintptr_t kind = (uintptr_t)arg;
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);

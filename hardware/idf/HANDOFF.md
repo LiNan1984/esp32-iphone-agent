@@ -19,7 +19,7 @@
 >   与 `Handsy GATT advertising`，iPhone App 的选板页**已能发现**开发板。但**加密配对、
 >   命令传输、通知与视频均未验证**。
 > - **视频转发**：未完成。
-- **BLE 命令 → USB HID 已接通（真机启动，iPhone 侧未验证）**：新增 `main/p4_cmd_bridge.c`。
+- **BLE 命令 → USB HID 已接通（真机启动 + Mac central 半程验证）**：新增 `main/p4_cmd_bridge.c`。
   App 写 `<id> <command>` 到 `cmd` 特征 → 拆出 id → 入队 → worker 任务执行
   `p4_hid_command()` → 拼回 `<id> <reply>` → 投递回 NimBLE host task → `reply` 特征通知。
   之所以要 worker + 事件回投：p4_ble 的回调跑在 NimBLE host task 上不能阻塞，而原固件的
