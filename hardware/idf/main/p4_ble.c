@@ -81,9 +81,12 @@ static bool authorized(uint16_t conn) {
 // Requesting it explicitly is what makes macOS/Android/Linux usable too.
 static void request_pairing_if_plain(uint16_t conn) {
     struct ble_gap_conn_desc d;
-    if (ble_gap_conn_find(conn, &d) != 0 || d.sec_state.encrypted) return;
-    if (ble_gap_security_initiate(conn) != 0) return;   // already in progress
-    ESP_LOGI(TAG, "requested pairing for conn %u", conn);
+    if (ble_gap_conn_find(conn, &d) != 0) return;
+    if (d.sec_state.encrypted) return;
+    int rc = ble_gap_security_initiate(conn);
+    if (rc == 0) ESP_LOGI(TAG, "requested pairing for conn %u", conn);
+    else if (rc == BLE_HS_EALREADY) ESP_LOGI(TAG, "pairing already in progress for conn %u", conn);
+    else ESP_LOGW(TAG, "ble_gap_security_initiate(%u) failed: %d", conn, rc);
 }
 
 static int access_cb(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *ctxt, void *arg) {
@@ -239,7 +242,14 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
     case BLE_GAP_EVENT_ENC_CHANGE: {
         struct ble_gap_conn_desc d;
         uint16_t conn = event->enc_change.conn_handle;
-        if (event->enc_change.status || ble_gap_conn_find(conn, &d) || !d.sec_state.encrypted || !d.sec_state.bonded) break;
+        if (event->enc_change.status || ble_gap_conn_find(conn, &d) || !d.sec_state.encrypted || !d.sec_state.bonded) {
+            struct ble_gap_conn_desc t;
+            int have = ble_gap_conn_find(conn, &t) == 0;
+            ESP_LOGW(TAG, "enc change rejected: status=%d enc=%d bonded=%d peer_known=%d",
+                     event->enc_change.status, have ? t.sec_state.encrypted : -1,
+                     have ? t.sec_state.bonded : -1, have ? (int)known_peer(&t.peer_id_addr) : -1);
+            break;
+        }
         if (known_peer(&d.peer_id_addr)) break;
         bool added = false;
         bool in_window = esp_timer_get_time() - pair_opened < PAIR_WINDOW_US;
@@ -304,7 +314,13 @@ esp_err_t p4_ble_start(const p4_ble_ops *ops) {
     app = *ops;
     ble_hs_cfg.sync_cb = on_sync; ble_hs_cfg.reset_cb = on_reset;
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
-    ble_hs_cfg.sm_bonding = 1; ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_bonding = 1;
+    // LE Secure Connections OFF. On P4 + ESP-Hosted every SC association fails at
+    // the DHKey check — measured as BLE_GAP_EVENT_ENC_CHANGE with status 1035,
+    // which is BLE_HS_SM_US_ERR(0x0B) = SMP reason 11 = "DHKey check failed", with
+    // encrypted=0 and bonded=0. Legacy pairing is the documented workaround on
+    // this path; it costs the SC key-derivation strength, not the bond itself.
+    ble_hs_cfg.sm_sc = 0;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.store_status_cb = store_status;

@@ -29,6 +29,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
+#include "esp_netif_types.h"
 #include "esp_mac.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -46,14 +47,31 @@ static const char *TAG = "core";
 // writes it to switch AP/STA. Filled in once Wi-Fi is up; empty until then, which
 // is the same as the original firmware before its first `net` read.
 static bool net_ready = false;
+static char net_vtok[9];
 static char net_json[192];
 
 static int net_read(uint8_t *out, size_t cap, size_t *len) {
   if (!out || !len || cap == 0) return -1;
-  // Answer even when Wi-Fi is not up: the App reads this to trigger pairing and
-  // to learn the hotspot credentials, and an ATT error here aborts setup before
-  // it starts. mode "none" says the AP is not up yet.
-  const char *json = net_ready ? net_json : "{\"mode\":\"none\"}";
+  // Built per read, not snapshotted at boot: the AP address is not assigned yet
+  // when the service starts, so a cached copy would always say 0.0.0.0. Still
+  // answers when Wi-Fi is down, because the App reads this to trigger pairing
+  // and an ATT error here aborts setup before it starts.
+  char json[192];
+  if (!net_ready) {
+    snprintf(json, sizeof json, "{\"mode\":\"none\"}");
+  } else {
+    char ipbuf[20] = "0.0.0.0";
+    for (esp_netif_t *n = esp_netif_next(NULL); n; n = esp_netif_next(n)) {
+        esp_netif_ip_info_t ip;
+        if (esp_netif_get_ip_info(n, &ip) != ESP_OK || ip.ip.addr == 0) continue;
+        snprintf(ipbuf, sizeof ipbuf, IPSTR, IP2STR(&ip.ip));
+        break;
+    }
+    snprintf(json, sizeof json,
+             "{\"mode\":\"ap\",\"ssid\":\"ESP32 Agent\",\"pass\":\"agent12345\","
+             "\"ip\":\"%s\",\"vtok\":\"%s\"}",
+             ipbuf, net_vtok);
+  }
   size_t n = strlen(json);
   if (n > cap) n = cap;
   memcpy(out, json, n);
@@ -413,6 +431,27 @@ static void test_airplay(void) {
   e = esp_wifi_start();
   check("esp_wifi_start succeeds", e == ESP_OK);
   if (e != ESP_OK) return;
+
+  // Publish the SoftAP credentials and the per-boot vtok on `net`, so the App can
+  // join the hotspot and open the video/OTA sessions. Without this the App reads
+  // {"mode":"none"} and setup stops dead at "Let Me See the Screen".
+  {
+    esp_netif_ip_info_t ip = {};
+    esp_netif_t *apif = esp_netif_get_handle_from_ifkey("ap");
+    if (apif) esp_netif_get_ip_info(apif, &ip);
+    snprintf(net_vtok, sizeof net_vtok, "%08x", (unsigned)esp_random());
+    net_ready = true;
+    {
+        char b[20] = "0.0.0.0";
+        for (esp_netif_t *n = esp_netif_next(NULL); n; n = esp_netif_next(n)) {
+            esp_netif_ip_info_t ip;
+            if (esp_netif_get_ip_info(n, &ip) != ESP_OK || ip.ip.addr == 0) continue;
+            snprintf(b, sizeof b, IPSTR, IP2STR(&ip.ip));
+            break;
+        }
+        ESP_LOGI(TAG, "net ready: ssid=ESP32 Agent ip=%s vtok=%s", b, net_vtok);
+    }
+  }
 
   // Every field is required: ap_mdns_start() dereferences hwaddr unconditionally
   // (snprintf "%02X%02X...", m[0], ...) with no NULL check, so a zeroed cfg
