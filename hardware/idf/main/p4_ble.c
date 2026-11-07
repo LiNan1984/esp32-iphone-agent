@@ -23,6 +23,7 @@ static const char *TAG = "p4_ble";
 static p4_ble_ops app;
 static uint8_t own_addr_type;
 static uint16_t reply_handle, status_handle, video_handle;
+static uint16_t cli_in_handle, cli_out_handle;
 static ble_addr_t known[MAX_BONDS];
 static int known_count;
 static portMUX_TYPE known_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -40,8 +41,16 @@ static const ble_uuid128_t reply_uuid = P4_UUID(0x02);
 static const ble_uuid128_t status_uuid = P4_UUID(0x03);
 static const ble_uuid128_t video_uuid = P4_UUID(0x04);
 static const ble_uuid128_t net_uuid = P4_UUID(0x05);
+// The CLI service (...0010). Its characteristics carry no *_ENC flag on purpose:
+// a computer reaching the board over it never forms an OS bond, which is why the
+// repository's own Go CLI can talk to a board without any pairing prompt. The
+// application-layer session crypto (X25519 + AES-GCM, already ported as
+// src/cli/cli_proto.c) is what authenticates it instead — not yet wired here.
+static const ble_uuid128_t cli_svc_uuid = P4_UUID(0x10);
+static const ble_uuid128_t cli_in_uuid = P4_UUID(0x11);
+static const ble_uuid128_t cli_out_uuid = P4_UUID(0x12);
 
-enum { CH_CMD, CH_STATUS, CH_NET };
+enum { CH_CMD, CH_STATUS, CH_NET, CH_CLI_IN };
 static bool known_peer(const ble_addr_t *peer) {
     bool found = false;
     portENTER_CRITICAL(&known_lock);
@@ -71,10 +80,22 @@ static int access_cb(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *
     (void)attr;
     const uintptr_t kind = (uintptr_t)arg;
     if (conn != active.conn) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
-    // Rejected here, but note that an encrypted characteristic is refused by the
-    // ATT layer before this callback runs at all — BLE_GATT_CHR_F_WRITE_ENC on the
-    // characteristic is what produces "Insufficient Encryption". An application-level
-    // bypass therefore cannot work, which is the correct outcome.
+
+    // The CLI service is unencrypted by design, so it is handled before the
+    // authorization gate rather than through it. Everything else needs the link
+    // encrypted and bonded — and note that an encrypted characteristic is refused
+    // by the ATT layer before this callback even runs, so the gate below is a
+    // second line of defence, not the only one.
+    if (kind == CH_CLI_IN) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) return BLE_ATT_ERR_UNLIKELY;
+        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        if (!len || len > MAX_VALUE) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        uint8_t bytes[MAX_VALUE];
+        if (os_mbuf_copydata(ctxt->om, 0, len, bytes) != 0) return BLE_ATT_ERR_UNLIKELY;
+        if (!app.command_cli) return BLE_ATT_ERR_UNLIKELY;
+        return app.command_cli(active, bytes, len) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+
     if (!authorized(conn)) {
         request_pairing_if_plain(conn);
         return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
@@ -96,6 +117,7 @@ static int access_cb(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *
     }
     return BLE_ATT_ERR_UNLIKELY;
 }
+
 static const struct ble_gatt_svc_def services[] = {{
     .type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &service_uuid.u,
     .characteristics = (struct ble_gatt_chr_def[]) {
@@ -109,6 +131,21 @@ static const struct ble_gatt_svc_def services[] = {{
          .flags = BLE_GATT_CHR_F_NOTIFY},
         {.uuid = &net_uuid.u, .access_cb = access_cb, .arg = (void *)CH_NET,
          .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
+        {0}
+    },
+},
+{
+    // The CLI service, for a computer. Deliberately unencrypted: no *_ENC flags,
+    // so no OS bond forms and no pairing prompt appears. This is the channel the
+    // repository's own Go CLI uses. It is also what makes the board testable from
+    // a desk, since the App's service refuses everything at the ATT layer until
+    // the link is encrypted.
+    .type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &cli_svc_uuid.u,
+    .characteristics = (struct ble_gatt_chr_def[]) {
+        {.uuid = &cli_in_uuid.u, .access_cb = access_cb, .arg = (void *)CH_CLI_IN, .val_handle = &cli_in_handle,
+         .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP},
+        {.uuid = &cli_out_uuid.u, .access_cb = access_cb, .val_handle = &cli_out_handle,
+         .flags = BLE_GATT_CHR_F_NOTIFY},
         {0}
     },
 }, {0}};
@@ -150,7 +187,8 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
         }
         if (event->subscribe.conn_handle != active.conn) break;
         uint16_t h = event->subscribe.attr_handle;
-        unsigned bit = h == reply_handle ? 1u : h == status_handle ? 2u : h == video_handle ? 4u : 0;
+        unsigned bit = h == reply_handle ? 1u : h == status_handle ? 2u
+                     : h == video_handle ? 4u : h == cli_out_handle ? 8u : 0;
         if (event->subscribe.cur_notify) subscriptions |= bit; else subscriptions &= ~bit;
         break;
     }
@@ -242,9 +280,18 @@ esp_err_t p4_ble_start(const p4_ble_ops *ops) {
     return ESP_OK;
 }
 static int notify(p4_ble_session session, uint16_t handle, const void *data, size_t len) {
-    unsigned bit = handle == reply_handle ? 1u : handle == status_handle ? 2u : handle == video_handle ? 4u : 0;
+    unsigned bit = handle == reply_handle ? 1u : handle == status_handle ? 2u
+                 : handle == video_handle ? 4u : handle == cli_out_handle ? 8u : 0;
+    // The CLI channel is unencrypted by design, so it is exempt from the auth gate.
+    bool cli = handle == cli_out_handle;
     if (!data || !len || len > UINT16_MAX || session.conn != active.conn ||
-        session.generation != active.generation || !(subscriptions & bit) || !authorized(session.conn)) return BLE_HS_EINVAL;
+        session.generation != active.generation || !(subscriptions & bit) ||
+        (!cli && !authorized(session.conn))) {
+        ESP_LOGW(TAG, "notify refused h=%u cli=%d conn=%u/%u gen=%u/%u sub=%u",
+                 handle, (int)cli, session.conn, active.conn,
+                 session.generation, active.generation, subscriptions);
+        return BLE_HS_EINVAL;
+    }
     struct os_mbuf *om = ble_hs_mbuf_from_flat(data, (uint16_t)len);
     return om ? ble_gatts_notify_custom(session.conn, handle, om) : BLE_HS_ENOMEM;
 }
@@ -253,3 +300,5 @@ p4_ble_session p4_ble_active_session(void) { return active; }
 int p4_ble_reply(p4_ble_session session, const void *data, size_t len) { return notify(session, reply_handle, data, len); }
 int p4_ble_status(p4_ble_session session, const void *data, size_t len) { return notify(session, status_handle, data, len); }
 int p4_ble_video(p4_ble_session session, const void *data, size_t len) { return notify(session, video_handle, data, len); }
+// Replies on the unencrypted CLI channel.
+int p4_ble_cli_out(p4_ble_session session, const void *data, size_t len) { return notify(session, cli_out_handle, data, len); }

@@ -27,11 +27,13 @@ typedef struct {
     p4_ble_session session;
     char id[ID_MAX];
     char line[CMD_MAX];
+    bool via_cli;   // reply on the unencrypted CLI channel, not the App's
 } cmd_item;
 
 typedef struct {
     p4_ble_session session;
     char reply[CMD_MAX];
+    bool via_cli;
 } reply_item;
 
 static QueueHandle_t cmd_q, reply_q;
@@ -48,10 +50,12 @@ static void reply_event(struct ble_npl_event *ev) {
     reply_pending = false;
     reply_item r;
     while (xQueueReceive(reply_q, &r, 0) == pdPASS) {
-        if (p4_ble_reply(r.session, r.reply, strlen(r.reply)) != 0) {
+        int rc = r.via_cli ? p4_ble_cli_out(r.session, r.reply, strlen(r.reply))
+                           : p4_ble_reply(r.session, r.reply, strlen(r.reply));
+        if (rc != 0) {
             // Not encrypted/bonded/subscribed any more: drop it. The App times the
             // request out on its side, which is the same as the original firmware.
-            ESP_LOGW(TAG, "reply dropped (session gone)");
+            ESP_LOGW(TAG, "reply notify failed rc=%d (%.48s)", rc, r.reply);
             break;
         }
     }
@@ -64,8 +68,10 @@ static void worker_task(void *arg) {
     cmd_item c;
     for (;;) {
         if (xQueueReceive(cmd_q, &c, portMAX_DELAY) != pdPASS) continue;
+        ESP_LOGI(TAG, "running id=%s cmd=%.32s", c.id, c.line);
         const char *r = p4_hid_command(c.line);
-        reply_item out = { .session = c.session };
+        ESP_LOGI(TAG, "reply id=%s -> %.48s", c.id, r ? r : "(null)");
+        reply_item out = { .session = c.session, .via_cli = c.via_cli };
         snprintf(out.reply, sizeof out.reply, "%s %s", c.id, r ? r : "err no reply");
         if (xQueueSend(reply_q, &out, 0) != pdPASS) {
             ESP_LOGW(TAG, "reply queue full, dropping");
@@ -79,7 +85,7 @@ static void worker_task(void *arg) {
 }
 
 // p4_ble command callback: copies the line and returns immediately.
-int p4_cmd_bridge_command(p4_ble_session session, const uint8_t *data, size_t len) {
+static int enqueue(p4_ble_session session, const uint8_t *data, size_t len, bool via_cli) {
     if (!data || len == 0 || len >= CMD_MAX) return -1;
 
     char id[ID_MAX];
@@ -87,7 +93,7 @@ int p4_cmd_bridge_command(p4_ble_session session, const uint8_t *data, size_t le
     size_t cmd_len;
     if (!p4_cmd_split((const char *)data, len, id, sizeof id, &cmd, &cmd_len)) return -1;
 
-    cmd_item c = { .session = session };
+    cmd_item c = { .session = session, .via_cli = via_cli };
     memcpy(c.id, id, strlen(id) + 1);
     memcpy(c.line, cmd, cmd_len);
     c.line[cmd_len] = '\0';
@@ -96,7 +102,17 @@ int p4_cmd_bridge_command(p4_ble_session session, const uint8_t *data, size_t le
         ESP_LOGW(TAG, "command queue full");
         return -1;
     }
+    ESP_LOGI(TAG, "queued id=%s cmd=%.32s via_cli=%d", c.id, c.line, (int)via_cli);
     return 0;
+}
+
+int p4_cmd_bridge_command(p4_ble_session session, const uint8_t *data, size_t len) {
+    return enqueue(session, data, len, false);
+}
+
+// The unencrypted CLI service: replies go back on cli_out, not the App's reply.
+int p4_cmd_bridge_command_cli(p4_ble_session session, const uint8_t *data, size_t len) {
+    return enqueue(session, data, len, true);
 }
 
 // Releasing held buttons/keys is cheap and must not be deferred: if the App drops

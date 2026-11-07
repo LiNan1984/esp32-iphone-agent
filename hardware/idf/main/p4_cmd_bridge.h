@@ -33,6 +33,9 @@ esp_err_t p4_cmd_bridge_start(void);
 int p4_cmd_bridge_command(p4_ble_session session, const uint8_t *data, size_t len);
 void p4_cmd_bridge_disconnected(p4_ble_session session);
 
+// The unencrypted CLI service variant: same commands, replies on cli_out.
+int p4_cmd_bridge_command_cli(p4_ble_session session, const uint8_t *data, size_t len);
+
 // Splits "<id> <command>". Pure and host-testable; see tests/test_cmd_split.c.
 bool p4_cmd_split(const char *line, size_t len, char *id, size_t id_cap,
                   const char **cmd, size_t *cmd_len);

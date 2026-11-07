@@ -466,7 +466,8 @@ void app_main(void) {
   // the npl_funcs table that every ble_npl_* call goes through. Starting the
   // bridge first dereferences that table while it is still NULL.
   const p4_ble_ops ble_ops = {
-    .command = p4_cmd_bridge_command, .net_read = net_read, .net_write = net_write,
+    .command = p4_cmd_bridge_command,
+      .command_cli = p4_cmd_bridge_command_cli, .net_read = net_read, .net_write = net_write,
     .status_read = status_read, .disconnected = p4_cmd_bridge_disconnected,
   };
   esp_err_t ble_err = p4_ble_start(&ble_ops);
